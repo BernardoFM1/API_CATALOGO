@@ -234,3 +234,4 @@ Você pode testar a API através de:
 ## 👨‍💻 Autor
 
 Desenvolvido por **[Bernardo Fernando](https://github.com/BernardoFM1)**.
+

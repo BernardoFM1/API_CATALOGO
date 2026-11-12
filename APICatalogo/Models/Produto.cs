@@ -9,14 +9,15 @@ namespace APICatalogo.Models
     {
         [Key]
         public int ProdutoID { get; set; }
-        [Required]
-        [StringLength(80)]
+        [Required(ErrorMessage ="O nome é obrigatório")]
+        [StringLength(80, ErrorMessage = "O nome deve ter no minimo 5 caracteres", MinimumLength = 5)]
         public string? Nome { get; set; }
         [Required]
         [StringLength(300)]
         public string? Descricao { get; set; }
         [Required]
-        [Column(TypeName = "Decimal(10, 3)")]
+        //[Column(TypeName = "Decimal(10, 3)")]
+        [Range(1, 10000, ErrorMessage ="O preço deve estar entre {1} e {2}")]
         public decimal Preco {  get; set; }
         [Required]
         [StringLength(300)]

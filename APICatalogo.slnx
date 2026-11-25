@@ -1,3 +1,4 @@
 <Solution>
   <Project Path="APICatalogo/APICatalogo.csproj" />
+  <Project Path="APIVitrine/APIVitrine.csproj" />
 </Solution>

@@ -489,3 +489,4 @@ $RECYCLE.BIN/
 # Frontend Vite build & env
 frontend/dist/
 frontend/.env.local
+*.tsbuildinfo

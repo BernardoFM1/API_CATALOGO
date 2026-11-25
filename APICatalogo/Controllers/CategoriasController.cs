@@ -1,4 +1,5 @@
 ﻿using APICatalogo.Context;
+using APICatalogo.DTOs;
 using APICatalogo.Models;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -7,92 +8,142 @@ namespace APICatalogo.Controllers
 {
     [Route("[controller]")]
     [ApiController]
-    public class CategoriasController : Controller
+    public class CategoriasController : ControllerBase
     {
-        
-
         private readonly AppDbContext _context;
+        private readonly IConfiguration _configuration;
 
-        public CategoriasController(AppDbContext context) { _context = context; }
+        public CategoriasController(AppDbContext context, IConfiguration configuration)
+        {
+            _context = context;
+            _configuration = configuration;
+        }
 
+        // Endpoint mantido como referencia de estudo de leitura de IConfiguration
+        [HttpGet("LerArquivoConfiguracao")]
+        public string GetValores()
+        {
+            var chave1 = _configuration["chave1"];
+            var chave2 = _configuration["chave2"];
+            var secao = _configuration["secao1:chave2"];
+
+            return string.Format("Primeira chave: {0}, Segunda chave: {1} e secao: {2}", chave1, chave2, secao);
+        }
 
         [HttpGet]
-
-        public ActionResult<IEnumerable<Categoria>> Get()
+        public async Task<ActionResult<IEnumerable<CategoriaResponseDto>>> Get()
         {
-           try
-            {
-                var categoria = _context.Categorias.AsNoTracking().ToList();
+            var categorias = await _context.Categorias
+                .AsNoTracking()
+                .OrderBy(c => c.Nome)
+                .Select(c => new CategoriaResponseDto
+                {
+                    CategoriaId = c.CategoriaId,
+                    Nome = c.Nome ?? string.Empty,
+                    ImageURL = c.ImageURL ?? string.Empty,
+                    TotalProdutos = c.produtos.Count
+                })
+                .ToListAsync();
 
-                if (categoria.Any()) { return categoria; }
-
-                return categoria;
-               
-            }
-            catch (Exception)
-            {
-                return StatusCode(StatusCodes.Status500InternalServerError,"Ocorreu um problema na solicitação.");
-            }
-          
+            return Ok(categorias);
         }
 
-
-
-        [HttpGet("{id:int}", Name ="ObterCategoria")]
-
-        public ActionResult<Categoria> Get(int id)
+        [HttpGet("{id:int}", Name = "ObterCategoria")]
+        public async Task<ActionResult<CategoriaResponseDto>> Get(int id)
         {
-            var categoria = _context.Categorias.FirstOrDefault(c => c.CategoriaId == id);
+            var categoria = await _context.Categorias
+                .AsNoTracking()
+                .Where(c => c.CategoriaId == id)
+                .Select(c => new CategoriaResponseDto
+                {
+                    CategoriaId = c.CategoriaId,
+                    Nome = c.Nome ?? string.Empty,
+                    ImageURL = c.ImageURL ?? string.Empty,
+                    TotalProdutos = c.produtos.Count
+                })
+                .FirstOrDefaultAsync();
 
-            if (categoria == null) { return NotFound("Categoria não encontrada"); }
+            if (categoria is null)
+            {
+                return NotFound(new { message = $"Categoria #{id} nao encontrada." });
+            }
 
-            return categoria;
+            return Ok(categoria);
         }
-
 
         [HttpPost]
-
-        public ActionResult Post(Categoria categoria)
+        public async Task<ActionResult<CategoriaResponseDto>> Post([FromBody] CategoriaCreateUpdateDto dto)
         {
-            if(categoria is null) { return BadRequest("Categoria não encontrada"); }
-            
-            _context.Categorias.Add(categoria);
-            _context.SaveChanges();
+            var categoria = new Categoria
+            {
+                Nome = dto.Nome.Trim(),
+                ImageURL = dto.ImageURL.Trim()
+            };
 
-            return new CreatedAtRouteResult("ObterCategoria", new { id = categoria.CategoriaId }, categoria);
+            _context.Categorias.Add(categoria);
+            await _context.SaveChangesAsync();
+
+            var response = new CategoriaResponseDto
+            {
+                CategoriaId = categoria.CategoriaId,
+                Nome = categoria.Nome,
+                ImageURL = categoria.ImageURL,
+                TotalProdutos = 0
+            };
+
+            return CreatedAtRoute("ObterCategoria", new { id = categoria.CategoriaId }, response);
         }
 
         [HttpPut("{id:int}")]
-
-        public ActionResult Put(int id, Categoria categoria)
+        public async Task<ActionResult<CategoriaResponseDto>> Put(int id, [FromBody] CategoriaCreateUpdateDto dto)
         {
-            if (id != categoria.CategoriaId) { return BadRequest("Categoria não encontrada."); }
-            _context.Entry(categoria).State = EntityState.Modified;
-            _context.SaveChanges();
+            var categoria = await _context.Categorias
+                .Include(c => c.produtos)
+                .FirstOrDefaultAsync(c => c.CategoriaId == id);
 
-            return Ok(categoria);
+            if (categoria is null)
+            {
+                return NotFound(new { message = $"Categoria #{id} nao encontrada." });
+            }
 
+            categoria.Nome = dto.Nome.Trim();
+            categoria.ImageURL = dto.ImageURL.Trim();
 
+            await _context.SaveChangesAsync();
+
+            return Ok(new CategoriaResponseDto
+            {
+                CategoriaId = categoria.CategoriaId,
+                Nome = categoria.Nome,
+                ImageURL = categoria.ImageURL,
+                TotalProdutos = categoria.produtos.Count
+            });
         }
 
         [HttpDelete("{id:int}")]
-
-        public ActionResult Delete(int id)
+        public async Task<ActionResult> Delete(int id)
         {
-            var categoria = _context.Categorias.FirstOrDefault(c => c.CategoriaId == id);
+            var categoria = await _context.Categorias
+                .Include(c => c.produtos)
+                .FirstOrDefaultAsync(c => c.CategoriaId == id);
 
-            if (categoria is null) { return BadRequest("Categoria não encontrada."); }
+            if (categoria is null)
+            {
+                return NotFound(new { message = $"Categoria #{id} nao encontrada." });
+            }
 
+            if (categoria.produtos.Any())
+            {
+                return Conflict(new
+                {
+                    message = $"Nao e possivel excluir a categoria '{categoria.Nome}' pois existem {categoria.produtos.Count} produto(s) vinculado(s)."
+                });
+            }
 
             _context.Categorias.Remove(categoria);
-            _context.SaveChanges();
+            await _context.SaveChangesAsync();
 
-            return Ok(200);
+            return Ok(new { message = $"Categoria '{categoria.Nome}' removida com sucesso." });
         }
-
-
-
-
-        
     }
 }

@@ -1,6 +1,6 @@
 ﻿namespace APICatalogo.Services
 {
-    public interface MeuServico : IMeuServico
+    public class MeuServico : IMeuServico
     {
 
         public string saudacao(string nome)

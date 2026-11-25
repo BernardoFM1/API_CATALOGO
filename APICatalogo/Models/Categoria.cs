@@ -18,7 +18,7 @@ namespace APICatalogo.Models
     public string? Nome { get; set; }
 
         [Required]
-        [StringLength(80)]
+        [StringLength(300)]
     public string? ImageURL { get; set; }
     public ICollection<Produto> produtos { get; set; }
     }

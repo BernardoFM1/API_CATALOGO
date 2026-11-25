@@ -12,6 +12,16 @@ namespace APICatalogo.Context
 
         public DbSet<Categoria> Categorias { get; set; }
         public DbSet<Produto> Produtos { get; set; }
+        public DbSet<SyncLog> SyncLogs { get; set; }
+
+        protected override void OnModelCreating(ModelBuilder modelBuilder)
+        {
+            base.OnModelCreating(modelBuilder);
+
+            modelBuilder.Entity<Produto>()
+                .Property(p => p.Preco)
+                .HasPrecision(10, 2);
+        }
 
     }
 }

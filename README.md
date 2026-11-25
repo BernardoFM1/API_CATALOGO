@@ -1,237 +1,191 @@
-# 📦 Catálogo de Produtos e Categorias - ASP.NET Core Web API
+# Catálogo Master & Sincronização entre Aplicações
 
-Uma API RESTful moderna e robusta desenvolvida em **.NET 8** e **C#**, com foco no gerenciamento completo de catálogo de produtos e suas respectivas categorias (e.g., lanches, bebidas, sobremesas). O projeto utiliza **Entity Framework Core** com provedor **Pomelo MySQL**, arquitetura em camadas clara, persistência relacional com migrações (*Code-First*), seed de dados e documentação interativa via **Swagger/OpenAPI**.
+Sistema full-stack de **cadastro, consulta e sincronização de produtos entre duas aplicações independentes**, desenvolvido com **ASP.NET Core 8 (C#)**, **Entity Framework Core** (SQLite por padrão + suporte configurável para SQL Server), **Vue 3 + TypeScript + Bootstrap 5** e integração via **Webhook HTTP autenticado**.
 
----
-
-## 📑 Sumário
-
-- [Visão Geral e Contexto](#-visão-geral-e-contexto)
-- [Tecnologias e Bibliotecas](#-tecnologias-e-bibliotecas)
-- [Arquitetura do Projeto](#-arquitetura-do-projeto)
-- [Modelo de Dados](#-modelo-de-dados)
-- [Endpoints da API](#-endpoints-da-api)
-  - [Categorias](#-categorias-controller)
-  - [Produtos](#-produtos-controller)
-- [Como Executar o Projeto](#-como-executar-o-projeto)
-  - [Pré-requisitos](#pré-requisitos)
-  - [Passo a Passo](#passo-a-passo)
-- [Migrações e Dados Iniciais (Seed)](#-migrações-e-dados-iniciais-seed)
-- [Testes de Requisição](#-testes-de-requisição)
-- [Boas Práticas Implementadas](#-boas-práticas-implementadas)
+> Projeto evoluído a partir de uma API inicial de catálogo para demonstrar arquitetura full-stack prática, resiliência em integrações HTTP entre serviços e persistência relacional pronta para rodar localmente com zero configuração externa.
 
 ---
 
-## 🎯 Visão Geral e Contexto
+## Arquitetura da Solução
 
-O objetivo principal desta API é fornecer os serviços essenciais de *backend* (CRUD completo) para sistemas de comércio, catálogo eletrônico ou cardápio digital:
-- **Gestão de Categorias:** Organização hierárquica dos itens (ex.: Lanches, Bebidas, Sobremesas).
-- **Gestão de Produtos:** Controle de estoque, preço unitário, imagens ilustrativas, descrições detalhadas e vínculo com categorias.
-- **Relacionamento 1:N:** Cada categoria pode possuir múltiplos produtos associados, mantendo integridade referencial.
-- **Otimização de Consultas:** Uso de consultas não rastreadas (`AsNoTracking()`) em leituras para ganho de performance e menor consumo de memória.
-- **Resolução de Ciclos de Referência:** Configuração de serialização JSON com `ReferenceHandler.IgnoreCycles` para evitar loops infinitos de navegação mútua entre entidades.
+```mermaid
+flowchart LR
+    UI["Frontend Web<br/>Vue 3 + TypeScript + Bootstrap 5<br/>(:5173)"]
+
+    subgraph AppA["App A — APICatalogo (:5070)"]
+        API_A["ASP.NET Core 8 Web API<br/>Produtos · Categorias · Sync"]
+        DB_A[("catalogo.db<br/>SQLite / SQL Server")]
+        API_A --- DB_A
+    end
+
+    subgraph AppB["App B — APIVitrine (:5071)"]
+        API_B["ASP.NET Core 8 Web API<br/>Webhooks · Vitrine · Chaos 503"]
+        DB_B[("vitrine.db<br/>SQLite / SQL Server")]
+        API_B --- DB_B
+    end
+
+    UI -->|"REST + CORS (CRUD, Filtros, Logs)"| API_A
+    UI -->|"Consulta espelho & Simula 503"| API_B
+    API_A -->|"POST /webhooks/produtos<br/>Header: X-Webhook-Secret"| API_B
+```
+
+### Fluxo de Sincronização
+1. O usuário cadastra, edita ou exclui um produto no **Frontend Vue** (consumindo o `APICatalogo`).
+2. O `APICatalogo` valida os dados (Data Annotations + validação customizada), persiste no seu banco (`catalogo.db`) e dispara um **Webhook HTTP** autenticado com `X-Webhook-Secret` para a `APIVitrine`.
+3. A `APIVitrine` valida o secret e faz **upsert** (ou remoção) idempotente pelo `ProdutoOrigemId` no seu próprio banco (`vitrine.db`).
+4. O `APICatalogo` registra o resultado na tabela `SyncLogs` (ação, status HTTP, latência em `ms` e eventual erro). **Se a `APIVitrine` estiver offline ou retornando `503`, o cadastro principal não falha** — a divergência aparece no painel comparativo e pode ser ressincronizada com um clique.
 
 ---
 
-## 🛠 Tecnologias e Bibliotecas
+## Stack Tecnológica
 
-| Tecnologia / Pacote | Versão | Função no Projeto |
-| :--- | :--- | :--- |
-| **.NET** | `8.0` | Framework principal de desenvolvimento |
-| **C#** | `12` | Linguagem de programação orientada a objetos |
-| **ASP.NET Core Web API** | `8.0` | Framework web para criação de serviços RESTful |
-| **Entity Framework Core** | `8.0.x` | ORM para mapeamento objeto-relacional e manipulação do banco |
-| **Pomelo.EntityFrameworkCore.MySql** | `8.0.3` | Provedor MySQL para Entity Framework Core |
-| **Microsoft.EntityFrameworkCore.Design** | `8.0.x` | Ferramental de design para suporte a Migrations via CLI |
-| **Swashbuckle.AspNetCore (Swagger)** | `6.6.2` | Geração de documentação OpenAPI e interface Swagger UI |
-| **MySQL** | `8.x` | Sistema gerenciador de banco de dados relacional |
+| Camada | Tecnologias |
+| :--- | :--- |
+| **App A (`APICatalogo`)** | .NET 8, ASP.NET Core Web API, EF Core 8 (SQLite / SQL Server), Swagger/OpenAPI, `IHttpClientFactory` |
+| **App B (`APIVitrine`)** | .NET 8, ASP.NET Core Web API, EF Core 8 (SQLite / SQL Server), Swagger/OpenAPI, simulador de falha HTTP 503 |
+| **Frontend (`frontend`)** | Vue 3 (Composition API), TypeScript, Vite, Bootstrap 5, Bootstrap Icons, Axios |
+| **Banco de Dados** | **SQLite** como padrão (criação e seed automáticos ao iniciar) com alternância para **SQL Server** via `appsettings.json` |
 
 ---
 
-## 🏗 Arquitetura do Projeto
-
-A aplicação está organizada de forma modular e coesa:
+## Estrutura do Repositório
 
 ```text
 APICatalogo/
-├── APICatalogo.slnx                  # Arquivo de Solução .NET
-├── .gitignore                         # Regras de exclusão do Git para .NET e VS
-├── README.md                          # Documentação detalhada da API
-└── APICatalogo/                       # Projeto Web API principal
-    ├── Context/
-    │   └── AppDbContext.cs           # Contexto do EF Core (DbSets e Mapeamento)
-    ├── Controllers/
-    │   ├── CategoriasController.cs   # Endpoints de gerenciamento de Categorias
-    │   └── ProdutosController.cs     # Endpoints de gerenciamento de Produtos
-    ├── Models/
-    │   ├── Categoria.cs              # Entidade Categoria com Data Annotations
-    │   └── Produto.cs                # Entidade Produto com Data Annotations
-    ├── Migrations/                   # Histórico de migrações e seeds do banco de dados
-    │   ├── PrimeiraMigrate.cs
-    │   ├── AjusteTabelas.cs
-    │   ├── Populacategorias.cs
-    │   └── populaProdutos.cs
-    ├── Properties/
-    │   └── launchSettings.json       # Configurações de inicialização local
-    ├── appsettings.json              # Configurações gerais e Connection String
-    ├── appsettings.Development.json  # Configurações do ambiente de desenvolvimento
-    ├── APICatalogo.http              # Arquivo de testes rápidos de requisições HTTP
-    └── Program.cs                    # Configuração de serviços, DI e pipeline HTTP
+├── APICatalogo.slnx              # Solução .NET contendo as duas APIs
+├── start-all.ps1                 # Script PowerShell para subir os 3 serviços juntos
+├── APICatalogo/                  # App A — API Principal (Catálogo Master)
+│   ├── Context/                  # AppDbContext + DbInitializer (seed automático)
+│   ├── Controllers/              # ProdutosController, CategoriasController, SyncController
+│   ├── DTOs/                     # Contratos de entrada/saída, paginação e webhook
+│   ├── Extensions/               # Middleware global de tratamento de exceções
+│   ├── Models/                   # Produto, Categoria, SyncLog, ErrorDetails
+│   ├── Services/                 # WebhookSyncService (+ IMeuServico preservado)
+│   └── Validations/              # Validações customizadas
+├── APIVitrine/                   # App B — API Secundária (Vitrine / PDV)
+│   ├── Context/                  # VitrineDbContext (banco isolado)
+│   ├── Controllers/              # WebhooksController, VitrineController
+│   ├── DTOs/                     # Contratos do webhook e simulação de falha
+│   ├── Models/                   # ProdutoVitrine
+│   └── Services/                 # ChaosSimulationState (modo 503 ao vivo)
+└── frontend/                     # Interface Web em Vue 3 + TypeScript + Bootstrap 5
+    └── src/
+        ├── components/           # ProdutosView, ProdutoModal, CategoriasView, SincronizacaoView
+        ├── services/             # Cliente Axios para App A (:5070) e App B (:5071)
+        ├── types/                # Interfaces TypeScript espelhando os DTOs das APIs
+        └── utils/                # Formatadores de moeda e data/hora
 ```
 
 ---
 
-## 🗄 Modelo de Dados
-
-O modelo relacional do projeto é composto por duas entidades principais com relacionamento **1 para N** (1 Categoria possui N Produtos):
-
-```mermaid
-erDiagram
-    CATEGORIAS ||--o{ PRODUTOS : "possui"
-    
-    CATEGORIAS {
-        int CategoriaId PK
-        string Nome "VARCHAR(80) NOT NULL"
-        string ImageURL "VARCHAR(80) NOT NULL"
-    }
-
-    PRODUTOS {
-        int ProdutoID PK
-        string Nome "VARCHAR(80) NOT NULL"
-        string Descricao "VARCHAR(300) NOT NULL"
-        decimal Preco "DECIMAL(10,3) NOT NULL"
-        string ImagemUrl "VARCHAR(300) NOT NULL"
-        float Estoque "FLOAT NOT NULL"
-        datetime DataCadastro "DATETIME NOT NULL"
-        int CategoriaId FK "Vinculado à Categoria"
-    }
-```
-
----
-
-## 🚀 Endpoints da API
-
-A documentação visual e interativa dos endpoints está disponível no Swagger UI ao iniciar o projeto (`/swagger`).
-
-### 📂 Categorias Controller (`/Categorias`)
-
-| Método | Rota | Descrição | Status Retornado |
-| :--- | :--- | :--- | :--- |
-| `GET` | `/Categorias` | Retorna a lista de todas as categorias cadastradas | `200 OK`, `500 Internal Server Error` |
-| `GET` | `/Categorias/{id}` | Busca os dados de uma categoria por ID | `200 OK`, `404 Not Found` |
-| `POST` | `/Categorias` | Cadastra uma nova categoria no banco | `201 Created`, `400 Bad Request` |
-| `PUT` | `/Categorias/{id}` | Altera as informações de uma categoria existente | `200 OK`, `400 Bad Request` |
-| `DELETE` | `/Categorias/{id}` | Exclui uma categoria do banco | `200 OK`, `400 Bad Request` |
-
-#### Exemplo de Payload para Cadastro de Categoria (`POST /Categorias`):
-```json
-{
-  "nome": "Lanches Artesanais",
-  "imageURL": "lanches-artesanais.jpg"
-}
-```
-
----
-
-### 🍔 Produtos Controller (`/Produtos`)
-
-| Método | Rota | Descrição | Status Retornado |
-| :--- | :--- | :--- | :--- |
-| `GET` | `/Produtos` | Lista todos os produtos cadastrados | `200 OK`, `404 Not Found` |
-| `GET` | `/Produtos/{id}` | Busca os detalhes de um produto específico | `200 OK`, `404 Not Found` |
-| `POST` | `/Produtos` | Adiciona um novo produto no catálogo | `201 Created`, `400 Bad Request` |
-| `PUT` | `/Produtos/{id}` | Atualiza o registro de um produto | `200 OK`, `400 Bad Request` |
-| `DELETE` | `/Produtos/{id}` | Exclui um produto cadastrado | `200 OK`, `404 Not Found` |
-
-#### Exemplo de Payload para Cadastro de Produto (`POST /Produtos`):
-```json
-{
-  "nome": "Hambúrguer Especial",
-  "descricao": "Pão brioche, blend bovino 180g e queijo cheddar",
-  "preco": 28.50,
-  "imagemUrl": "burger.jpg",
-  "estoque": 25,
-  "dataCadastro": "2026-11-06T20:00:00Z",
-  "categoriaId": 2
-}
-```
-
----
-
-## 💻 Como Executar o Projeto
+## Como Executar o Projeto
 
 ### Pré-requisitos
-- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) instalado.
-- Servidor [MySQL](https://www.mysql.com/) em execução localmente ou via container Docker.
-- Ferramenta de linha de comando do EF Core instalada globalmente:
-  ```bash
-  dotnet tool install --global dotnet-ef
-  ```
+- [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0) (ou superior, ex.: .NET 10 SDK)
+- [Node.js 20+](https://nodejs.org/) e `npm`
 
-### Passo a Passo
+> Não é necessário instalar nem configurar servidor de banco de dados: os bancos SQLite (`catalogo.db` e `vitrine.db`) e os dados iniciais são criados automaticamente na primeira execução.
 
-1. **Clonar o Repositório:**
-   ```bash
-   git clone https://github.com/BernardoFM1/API_CATALOGO.git
-   cd API_CATALOGO
-   ```
+### Opção 1 — Subir tudo de uma vez (Windows PowerShell)
+Na raiz do repositório:
+```powershell
+cd frontend
+npm install
+cd ..
+.\start-all.ps1
+```
 
-2. **Configurar a Conexão com o Banco de Dados:**
-   Abra o arquivo [`APICatalogo/appsettings.json`](APICatalogo/appsettings.json) e configure a chave `DefaultConnection` com as credenciais do seu MySQL:
-   ```json
-   "ConnectionStrings": {
-     "DefaultConnection": "Server=localhost;Database=CatalogoDB;Uid=seu_usuario;Pwd=sua_senha;"
-   }
-   ```
+### Opção 2 — Subir manualmente em 3 terminais
 
-3. **Restaurar Dependências:**
-   ```bash
-   dotnet restore
-   ```
+**Terminal 1 — App A (`APICatalogo` em `http://localhost:5070`):**
+```bash
+cd APICatalogo
+dotnet run --launch-profile http
+```
 
-4. **Aplicar as Migrações (Criação do Banco de Dados e Tabelas):**
-   ```bash
-   dotnet ef database update --project APICatalogo
-   ```
-   > Esse comando cria o banco `CatalogoDB`, as tabelas `Categorias` e `Produtos`, e executa as migrações de seed pré-configuradas.
+**Terminal 2 — App B (`APIVitrine` em `http://localhost:5071`):**
+```bash
+cd APIVitrine
+dotnet run --launch-profile http
+```
 
-5. **Executar a API:**
-   ```bash
-   dotnet run --project APICatalogo
-   ```
+**Terminal 3 — Frontend Vue (`http://localhost:5173`):**
+```bash
+cd frontend
+npm install
+npm run dev
+```
 
-6. **Acessar a Documentação Swagger:**
-   - Swagger UI: [https://localhost:7000/swagger](https://localhost:7000/swagger) ou [http://localhost:5070/swagger](http://localhost:5070/swagger)
+### URLs Principais
+- **Interface Web (Vue + Bootstrap)**: `http://localhost:5173`
+- **Swagger — APICatalogo (App A)**: `http://localhost:5070/swagger`
+- **Swagger — APIVitrine (App B)**: `http://localhost:5071/swagger`
 
 ---
 
-## 🌱 Migrações e Dados Iniciais (Seed)
+## Alternando para SQL Server
 
-O projeto possui migrações dedicadas para popular os primeiros dados de teste:
-- **`Populacategorias`**: Insere registros de exemplo nas categorias (*Bebidas*, *Lanches*, *Sobremesas*).
-- **`populaProdutos`**: Insere produtos vinculados às categorias criadas (*Coca-Cola Diet*, *Lanche de Atum*, *Pudim 100g*).
+Ambos os projetos (`APICatalogo` e `APIVitrine`) suportam troca de provedor sem alterar código C#. Basta editar o `appsettings.json` correspondente:
 
----
-
-## 🧪 Testes de Requisição
-
-Você pode testar a API através de:
-1. **Interface do Swagger UI**: Permite testar todos os métodos de forma interativa pelo navegador.
-2. **Arquivo `.http`**: Utilizando a extensão *REST Client* (VS Code) ou o editor integrado do Visual Studio, abrindo o arquivo [`APICatalogo/APICatalogo.http`](APICatalogo/APICatalogo.http).
-3. **Postman / Insomnia / cURL**: Enviando requisições diretamente para as rotas mapeadas.
+```json
+{
+  "DatabaseProvider": "SqlServer",
+  "ConnectionStrings": {
+    "SqlServerConnection": "Server=(localdb)\\mssqllocaldb;Database=CatalogoDB;Trusted_Connection=True;TrustServerCertificate=True;"
+  }
+}
+```
 
 ---
 
-## 🛡 Boas Práticas Implementadas
+## Principais Endpoints
 
-- **Tratamento de Ciclos de Referência:** Prevenção de exceções `JsonException: A possible object cycle was detected` utilizando `ReferenceHandler.IgnoreCycles`.
-- **Rastreamento Otimizado (`AsNoTracking`):** Utilizado em consultas somente leitura no `CategoriasController` para melhorar performance e economia de recursos.
-- **Códigos de Resposta Semânticos:** Respostas adequadas segundo o protocolo HTTP (`200 OK`, `201 Created` com header `Location`, `400 Bad Request`, `404 Not Found`).
-- **Validação de Entrada:** Uso de *Data Annotations* (`[Required]`, `[StringLength]`, `[Column]`, `[Key]`) para garantir integridade e validação dos dados recebidos.
+### App A — `APICatalogo` (`:5070`)
+| Método | Rota | Descrição |
+| :--- | :--- | :--- |
+| `GET` | `/Produtos` | Consulta paginada com `search`, `categoriaId`, `precoMin`, `precoMax`, `sortBy`, `sortDir`, `page`, `pageSize` |
+| `GET` | `/Produtos/{id}` | Detalhes de um produto |
+| `POST` | `/Produtos` | Cria produto, valida regras de domínio e dispara webhook `CREATED` |
+| `PUT` | `/Produtos/{id}` | Atualiza produto e dispara webhook `UPDATED` |
+| `DELETE` | `/Produtos/{id}` | Remove produto e dispara webhook `DELETED` |
+| `GET/POST/PUT/DELETE` | `/Categorias` | CRUD completo de categorias (com proteção HTTP `409 Conflict` se houver produtos vinculados) |
+| `GET` | `/Sync/logs` | Histórico de webhooks com contagem de sucessos/falhas e latência média |
+| `POST` | `/Sync/produtos/{id}` | Ressincroniza um produto específico com a `APIVitrine` |
+| `POST` | `/Sync/reconciliar` | Envia todo o catálogo para a `APIVitrine` e remove registros órfãos |
+| `GET` | `/health` | Saúde da API, provedor de banco e totais |
+
+### App B — `APIVitrine` (`:5071`)
+| Método | Rota | Descrição |
+| :--- | :--- | :--- |
+| `POST` | `/webhooks/produtos` | Recebe evento `UPSERT` ou `DELETE` validando `X-Webhook-Secret` |
+| `POST` | `/webhooks/reconciliar` | Reconcilia o espelho completo da vitrine |
+| `GET` | `/vitrine/produtos` | Lista os produtos atualmente replicados no banco `vitrine.db` |
+| `GET` | `/vitrine/status` | Saúde da réplica e estado da simulação de falha |
+| `POST` | `/vitrine/simular-falha` | Ativa/desativa retorno `HTTP 503` nos webhooks para demonstração ao vivo |
 
 ---
 
-## 👨‍💻 Autor
+## Roteiro de Demonstração (e Pontos para Entrevista)
+
+Use este roteiro de 2 minutos para apresentar o projeto em entrevistas técnicas:
+
+1. **Cadastro e consulta**: filtre produtos por texto/categoria/preço na aba **Produtos** e tente cadastrar um produto com a primeira letra minúscula para mostrar a validação customizada da API (`IValidatableObject`) refletida no formulário Vue.
+2. **Sincronização automática**: cadastre ou edite um produto válido e abra a aba **Sincronização** — mostre o registro idêntico nos dois bancos (`catalogo.db` e `vitrine.db`) e o log do webhook com status `HTTP 200` e latência em milissegundos.
+3. **Simulação de falha e recuperação**: clique em **Simular falha (HTTP 503)** na `APIVitrine`, edite o preço de um produto e mostre que:
+   - o `APICatalogo` não quebrou o cadastro do usuário;
+   - o erro `503` ficou auditado no histórico de webhooks (`SyncLogs`);
+   - o comparativo lado a lado destacou automaticamente o item como **Divergente**.
+4. **Ressincronização**: clique em **Restaurar APIVitrine** e depois em **Ressincronizar** (ou **Sincronizar catálogo inteiro**) para devolver os dois bancos a 100% de consistência.
+
+### Decisões técnicas fáceis de defender na entrevista
+- **Por que DTOs em vez de expor as entidades diretamente?** Evita *over-posting*, desacopla o contrato da API do esquema de banco e elimina ciclos de serialização.
+- **Por que a `APIVitrine` tem banco próprio?** Em arquiteturas distribuídas, cada serviço é dono dos seus dados (*Database per Service*), comunicando-se via contrato HTTP/Webhook em vez de compartilhar tabelas diretamente.
+- **Por que `IHttpClientFactory` no envio do webhook?** Evita exaustão de sockets (`SocketException`) gerenciando o pool de conexões HTTP corretamente no ASP.NET Core.
+- **Como funciona a idempotência no destino?** A `APIVitrine` usa `ProdutoOrigemId` como chave primária sem auto-incremento; reenviar o mesmo webhook várias vezes sempre converge para o mesmo estado sem duplicar registros.
+- **Próximo passo natural em escala de produção**: trocar o webhook síncrono pelo **Outbox Pattern + Worker/Mensageria (RabbitMQ/Azure Service Bus)** com retries automáticos e backoff exponencial.
+
+---
+
+## Autor
 
 Desenvolvido por **[Bernardo Fernando](https://github.com/BernardoFM1)**.
-
